@@ -22,7 +22,7 @@ DEFAULT_PEER_MULTI_ADDRS="/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGz
 PEER_MULTI_ADDRS=${PEER_MULTI_ADDRS:-$DEFAULT_PEER_MULTI_ADDRS}
 
 # Check if host multi-address is given else set to default
-DEFAULT_HOST_MULTI_ADDRS="/ip4/0.0.0.0/tcp/38331"
+DEFAULT_HOST_MULTI_ADDRS="/ip4/0.0.0.0/tcp/38340"
 HOST_MULTI_ADDRS=${HOST_MULTI_ADDRS:-$DEFAULT_HOST_MULTI_ADDRS}
 
 # Path to an RSA private key. If this path does not exist, a new key pair will be created.
@@ -54,19 +54,10 @@ echo_blue() {
 ROOT_DIR="$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)"
 
 # Function to clean up the server process upon exit
-cleanup() {
-    echo_green ">> Shutting down trainer..."
+cp -f /Users/lin/2/rl-swa/modal-login/userApiKey.json /Users/lin/2/rl-swa/modal-login/temp-data/userApiKey.json
+cp -f /Users/lin/2/rl-swa/modal-login/userData.json /Users/lin/2/rl-swa/modal-login/temp-data/userData.json
 
-    # Remove modal credentials if they exist
-    rm -r $ROOT_DIR/modal-login/temp-data/*.json 2> /dev/null || true
 
-    # Kill all processes belonging to this script's process group
-    kill -- -$$ || true
-
-    exit 0
-}
-
-trap cleanup EXIT
 
 echo -e "\033[38;5;224m"
 cat << "EOF"
@@ -119,9 +110,6 @@ while true; do
     esac
 done
 
-# Create logs directory if it doesn't exist
-mkdir -p "$ROOT/logs"
-
 if [ "$CONNECT_TO_TESTNET" = true ]; then
     # Run modal_login server.
     echo "Please login to create an Ethereum Server Wallet"
@@ -155,30 +143,18 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
             npm install -g --silent yarn
         fi
     fi
-
-    ENV_FILE="$ROOT"/modal-login/.env
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS version
-        sed -i '' "3s/.*/SMART_CONTRACT_ADDRESS=$SWARM_CONTRACT/" "$ENV_FILE"
-    else
-        # Linux version
-        sed -i "3s/.*/SMART_CONTRACT_ADDRESS=$SWARM_CONTRACT/" "$ENV_FILE"
-    fi
-
-    yarn install --immutable
-    echo "Building server"
-    yarn build > "$ROOT/logs/yarn.log" 2>&1
-    yarn start >> "$ROOT/logs/yarn.log" 2>&1 & # Run in background and log output
+    yarn install
+    yarn dev > /dev/null 2>&1 & # Run in background and suppress output
 
     SERVER_PID=$!  # Store the process ID
     echo "Started server process: $SERVER_PID"
     sleep 5
 
     # Try to open the URL in the default browser
-    if open http://localhost:3000 2> /dev/null; then
-        echo_green ">> Successfully opened http://localhost:3000 in your default browser."
+    if open http://localhost:3004 2> /dev/null; then
+        echo_green ">> Successfully opened http://localhost:3004 inyour default browser."
     else
-        echo ">> Failed to open http://localhost:3000. Please open it manually."
+        echo ">> Failed to open http://localhost:3004 Please open it manually."
     fi
 
     cd ..
@@ -195,7 +171,7 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
     # Wait until the API key is activated by the client
     echo "Waiting for API key to become activated..."
     while true; do
-        STATUS=$(curl -s "http://localhost:3000/api/get-api-key-status?orgId=$ORG_ID")
+        STATUS=$(curl -s "http://localhost:3004/api/get-api-key-status?orgId=$ORG_ID")
         if [[ "$STATUS" == "activated" ]]; then
             echo "API key is activated! Proceeding..."
             break
@@ -204,6 +180,15 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
             sleep 5
         fi
     done
+
+    ENV_FILE="$ROOT"/modal-login/.env
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS version
+        sed -i '' "3s/.*/SMART_CONTRACT_ADDRESS=$SWARM_CONTRACT/" "$ENV_FILE"
+    else
+        # Linux version
+        sed -i "3s/.*/SMART_CONTRACT_ADDRESS=$SWARM_CONTRACT/" "$ENV_FILE"
+    fi
 fi
 
 echo_green ">> Getting requirements..."
@@ -220,11 +205,10 @@ else
     pip install flash-attn --no-build-isolation
 
     case "$PARAM_B" in
-        32 | 72) CONFIG_PATH="$ROOT/hivemind_exp/configs/gpu/grpo-qwen-2.5-${PARAM_B}b-bnb-4bit-deepseek-r1.yaml" ;;
-        0.5 | 1.5 | 7) CONFIG_PATH="$ROOT/hivemind_exp/configs/gpu/grpo-qwen-2.5-${PARAM_B}b-deepseek-r1.yaml" ;;
-        *) exit 1 ;;
+        32 | 72) CONFIG_PATH="$ROOT/hivemind_exp/configs/gpu/grpo-qwen-2.5-${PARAM_B}b-bnb-4bit-deepseek-r1.yaml" && break ;;
+        0.5 | 1.5 | 7) CONFIG_PATH="$ROOT/hivemind_exp/configs/gpu/grpo-qwen-2.5-${PARAM_B}b-deepseek-r1.yaml" && break ;;
+        *)  echo ">>> Please answer in [0.5, 1.5, 7, 32, 72]." ;;
     esac
-
     if [ "$USE_BIG_SWARM" = true ]; then
         GAME="dapo"
     else
@@ -271,5 +255,23 @@ else
         --config "$CONFIG_PATH" \
         --game "$GAME"
 fi
+}
+
+RETRY_COUNT=0
+RETRY_DELAY=10 # 重试间隔时间（秒）
+# 主循环
+while true; do
+    echo_green ">> Starting training attempt $((RETRY_COUNT + 1))"
+    # 运行训练
+    if run_training; then
+        echo_green ">> Training completed successfully"
+    else
+        echo_green ">> Training failed, will retry after $RETRY_DELAY seconds"
+        sleep $RETRY_DELAY
+    fi
+    # 增加重试计数
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+done
+
 
 wait  # Keep script running until Ctrl+C
